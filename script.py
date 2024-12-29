@@ -5,154 +5,195 @@ import pandas as pd
 import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
+from nltk.stem import PorterStemmer, WordNetLemmatizer
 from textblob import TextBlob
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.cluster import KMeans
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
 
 
 class BeerChatbot:
     def __init__(self, file_path):
-        """Initialize the chatbot with data and necessary preprocessing"""
+        """Initialize the chatbot with data and preprocessing."""
         self.data = pd.read_csv(file_path)
         self.conversation = []
+        self.sentiment_scores = []
+        self.user_inputs = []  # Store all user inputs for wordcloud
         self.tokenizer = RegexpTokenizer(r'\w+')
         self.stopwords = set(stopwords.words('english'))
+        self.stopwords.update(['beer', 'want', 'like', 'good'])
+        self.vectorizer = TfidfVectorizer()
+        self.stemmer = PorterStemmer()
+        self.lemmatizer = WordNetLemmatizer()
 
-        # Add beer-specific stopwords
-        self.stopwords.update(['beer', 'ale', 'want', 'like', 'good'])
+        # Preprocess descriptions and add features
+        self.data['processed_desc'] = self.data['Description'].apply(self.preprocess_text)
+        self.data['entities'] = self.data['Description'].apply(self.extract_entities)
+        self.train_ml_models()
 
     def preprocess_text(self, text):
-        """Enhanced text preprocessing with better handling of beer-related terms"""
+        """Text preprocessing with stemming and lemmatization."""
         if not isinstance(text, str):
-            return []
-
+            return ''
         text = text.lower()
         text = re.sub(r'[^a-zA-Z\s]', '', text)
         tokens = self.tokenizer.tokenize(text)
-        return [word for word in tokens if word not in self.stopwords]
+        tokens = [self.stemmer.stem(word) for word in tokens if word not in self.stopwords]
+        tokens = [self.lemmatizer.lemmatize(word) for word in tokens]
+        return ' '.join(tokens)
 
-    def find_beer(self, preferences):
-        """Improved beer matching algorithm with weighted scoring"""
-        matches = []
+    def extract_entities(self, text):
+        """Extract beer-related entities from text."""
+        beer_styles = ['ipa', 'lager', 'stout', 'porter', 'ale', 'pilsner', 'saison']
+        text = text.lower()
+        entities = [style for style in beer_styles if style in text]
+        return ', '.join(entities)
 
-        # Convert preferences to set for faster lookup
-        pref_set = set(preferences)
+    def analyze_sentiment(self, text):
+        """Analyze sentiment with TextBlob."""
+        blob = TextBlob(text)
+        sentiment_score = blob.sentiment.polarity
+        self.sentiment_scores.append(sentiment_score)
 
-        for index, beer in self.data.iterrows():
-            description = set(self.preprocess_text(beer['Description']))
-            style = set(self.preprocess_text(beer['Style']))
+        if 'bad' in text.lower() or 'worst' in text.lower():
+            return "I see you're looking for beers that aren't rated highly. Here's what I found: "
+        elif sentiment_score > 0.5:
+            return "I'm glad you're so enthusiastic about beer! "
+        elif sentiment_score < -0.3:
+            return "I notice you seem a bit frustrated. Let me try to find better recommendations. "
+        return ""
 
-            # Weighted scoring system
-            score = (
-                    len(description & pref_set) * 2 +  # Description matches count more
-                    len(style & pref_set) * 3 +  # Style matches count even more
-                    self._match_abv(beer['ABV'], preferences) +
-                    self._match_ibu(beer['Min IBU'], beer['Max IBU'], preferences)
-            )
+    def display_sentiment_summary(self):
+        """Display summary of sentiment analysis from the conversation."""
+        if not self.sentiment_scores:
+            print("\nNo conversation data to analyze.")
+            return
 
-            if score > 0:
-                matches.append({
-                    'beer': beer,
-                    'score': score,
-                    'matched_terms': list(description & pref_set) + list(style & pref_set)
-                })
+        avg_sentiment = sum(self.sentiment_scores) / len(self.sentiment_scores)
+        print("\nSentiment Analysis Summary:")
+        print(f"Average sentiment score: {avg_sentiment:.2f}")
+        print(f"Most positive moment: {max(self.sentiment_scores):.2f}")
+        print(f"Most negative moment: {min(self.sentiment_scores):.2f}")
 
-        matches.sort(key=lambda x: x['score'], reverse=True)
-        return matches[:3]
+        # Plot sentiment progression
+        plt.figure(figsize=(10, 5))
+        plt.plot(self.sentiment_scores, marker='o')
+        plt.title('Conversation Sentiment Progression')
+        plt.xlabel('Message Number')
+        plt.ylabel('Sentiment Score')
+        plt.grid(True)
+        plt.show()
 
-    def _match_abv(self, abv, preferences):
-        """Helper method to match ABV preferences"""
-        if any(term in preferences for term in ['strong', 'heavy']):
-            return 2 if abv > 7.0 else 0
-        if any(term in preferences for term in ['light', 'weak']):
-            return 2 if abv < 5.0 else 0
-        return 0
+    def generate_wordcloud(self):
+        """Generate and display wordcloud from conversation."""
+        if not self.user_inputs:
+            print("\nNo conversation data for wordcloud.")
+            return
 
-    def _match_ibu(self, min_ibu, max_ibu, preferences):
-        """Helper method to match bitterness preferences"""
-        if any(term in preferences for term in ['bitter', 'hoppy']):
-            return 2 if max_ibu > 50 else 0
-        if any(term in preferences for term in ['smooth', 'mild']):
-            return 2 if max_ibu < 30 else 0
-        return 0
+        # Combine all user inputs
+        text = ' '.join(self.user_inputs)
 
-    def format_beer_recommendation(self, match):
-        """Format beer recommendation with detailed information"""
-        beer = match['beer']
-        return (
-            f"- {beer['Name']} ({beer['Style']})\n"
-            f"  ABV: {beer['ABV']}% | IBU: {beer['Min IBU']}-{beer['Max IBU']}\n"
-            f"  Matched terms: {', '.join(match['matched_terms'])}\n"
-            f"  Description: {beer['Description'][:100]}..."
-        )
+        # Create and generate a word cloud image
+        wordcloud = WordCloud(width=800, height=400,
+                              background_color='white',
+                              stopwords=self.stopwords,
+                              min_font_size=10).generate(text)
 
-    def chat(self):
-        """Main chatbot interaction loop with improved user experience"""
-        print("Welcome to the Beer Recommendation Chatbot!")
-        print("Tell me what kind of beer you're looking for (or type 'exit' to quit)")
-        print("Examples: 'I want a fruity and smooth beer' or 'Looking for something strong and bitter'")
-
-        while True:
-            user_input = input("\nYou: ").strip()
-
-            if not user_input:
-                print("Please tell me what kind of beer you're looking for.")
-                continue
-
-            if user_input.lower() in ['exit', 'quit']:
-                self._show_summary()
-                break
-
-            self.conversation.append(user_input)
-            preferences = self.preprocess_text(user_input)
-
-            if not preferences:
-                print("I couldn't understand your preferences. Please try describing the beer you want.")
-                continue
-
-            recommendations = self.find_beer(preferences)
-
-            if recommendations:
-                print("\nBased on your preferences, here are some beers you might enjoy:")
-                for match in recommendations:
-                    print("\n" + self.format_beer_recommendation(match))
-            else:
-                print(
-                    "I couldn't find any beers matching your preferences. Try describing the taste, strength, or style you're looking for.")
-
-    def _show_summary(self):
-        """Show conversation summary with improved visualization"""
-        print("\nThanks for chatting! Here's a summary of our conversation:")
-        words = []
-        for message in self.conversation:
-            words.extend(self.preprocess_text(message))
-
-        if words:
-            counter = Counter(words)
-            print("\nMost common preferences:")
-            for word, count in counter.most_common(5):
-                print(f"- {word}: {count} times")
-
-            self._generate_wordcloud(' '.join(self.conversation))
-
-    def _generate_wordcloud(self, text):
-        """Generate and display word cloud with better styling"""
-        wordcloud = WordCloud(
-            width=800,
-            height=400,
-            background_color='white',
-            colormap='viridis',
-            max_words=50
-        ).generate(text)
-
+        # Display the word cloud
         plt.figure(figsize=(10, 5))
         plt.imshow(wordcloud, interpolation='bilinear')
         plt.axis('off')
-        plt.title("Your Beer Preferences Visualization")
+        plt.title('WordCloud of Conversation Topics')
         plt.show()
+
+    def train_ml_models(self):
+        """Train Random Forest and K-Means models."""
+        # Prepare data
+        X = self.vectorizer.fit_transform(self.data['processed_desc'])
+        self.kmeans = KMeans(n_clusters=5, random_state=42)
+        self.data['cluster'] = self.kmeans.fit_predict(X)
+
+        # Train Random Forest for classification
+        X_train, X_test, y_train, y_test = train_test_split(X, self.data['cluster'], test_size=0.2, random_state=42)
+        self.rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+        self.rf_model.fit(X_train, y_train)
+
+        # Evaluate performance
+        y_pred = self.rf_model.predict(X_test)
+        print("Model Accuracy:", accuracy_score(y_test, y_pred))
+        print(classification_report(y_test, y_pred))
+
+    def recommend_beers(self, user_input):
+        """Recommend beers based on clustering and random forest predictions."""
+        # Process input
+        processed_input = self.preprocess_text(user_input)
+        input_vector = self.vectorizer.transform([processed_input])
+
+        # Predict cluster
+        cluster = self.rf_model.predict(input_vector)[0]
+        cluster_data = self.data[self.data['cluster'] == cluster]
+
+        # Filter for negative sentiment (bad beers)
+        if 'bad' in user_input.lower() or 'worst' in user_input.lower():
+            cluster_data = self.data[self.data['review_overall'] < 3.0]
+
+        # Sort recommendations by similarity
+        similarities = cluster_data['processed_desc'].apply(lambda x: self.similarity(processed_input, x))
+        recommendations = cluster_data.loc[similarities.nlargest(3).index]
+
+        # Generate explanations
+        explanations = []
+        for _, beer in recommendations.iterrows():
+            reason = []
+            if 'bitter' in user_input.lower() and beer['Bitter'] > 50:
+                reason.append("high bitterness level")
+            if 'sweet' in user_input.lower() and beer['Sweet'] > 50:
+                reason.append("sweet flavor profile")
+            if 'low alcohol' in user_input.lower() and beer['ABV'] < 5.0:
+                reason.append("low alcohol content")
+            if not reason:
+                reason.append("similar description and style")
+
+            explanation = f"- {beer['Name']} ({beer['Style']}) - ABV: {beer['ABV']}% | IBU: {beer['Min IBU']}-{beer['Max IBU']} - Recommended because of: {', '.join(reason)}"
+            explanations.append(explanation)
+
+        return explanations
+
+    def similarity(self, text1, text2):
+        """Simple similarity metric using TF-IDF."""
+        vec1 = self.vectorizer.transform([text1])
+        vec2 = self.vectorizer.transform([text2])
+        return (vec1 * vec2.T).toarray()[0][0]
+
+    def chat(self):
+        """Chatbot loop."""
+        print("Welcome to the Beer Recommendation Chatbot!")
+        print("Tell me what kind of beer you're looking for (or type 'exit' to quit)")
+
+        while True:
+            user_input = input("\nYou: ").strip()
+            if user_input.lower() in ['exit', 'quit']:
+                break
+
+            self.user_inputs.append(user_input)  # Store user input for wordcloud
+            sentiment_response = self.analyze_sentiment(user_input)
+            if sentiment_response:
+                print(sentiment_response)
+
+            recommendations = self.recommend_beers(user_input)
+            for rec in recommendations:
+                print(rec)
+
+        # Display analysis after chat ends
+        self.display_sentiment_summary()
+        self.generate_wordcloud()
 
 
 if __name__ == "__main__":
-    file_path = '/Users/rasmusjensen/PycharmProjects/BeerChatBot/data/beer_profile_and_ratings.csv'  # Update with your file path
+    file_path = '/Users/rasmusjensen/PycharmProjects/BeerChatBot/data/beer_profile_and_ratings.csv'
     chatbot = BeerChatbot(file_path)
     chatbot.chat()

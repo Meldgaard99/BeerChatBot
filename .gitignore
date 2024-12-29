@@ -1,0 +1,13 @@
+# Ignorer virtuelle miljøer
+myenv/
+*.pyc
+__pycache__/
+.DS_Store
+
+# Ignorer store biblioteker
+*.dylib
+
+# Ignorer Git-objektfiler og midlertidige filer
+*.pack
+*.idx
+
