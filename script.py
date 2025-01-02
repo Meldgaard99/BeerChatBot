@@ -1,8 +1,5 @@
-import json
 import re
-from collections import Counter
 import pandas as pd
-import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
 from nltk.stem import PorterStemmer, WordNetLemmatizer
@@ -14,6 +11,8 @@ from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
+import os
+
 
 
 class BeerChatbot:
@@ -46,13 +45,24 @@ class BeerChatbot:
         tokens = [self.lemmatizer.lemmatize(word) for word in tokens]
         return ' '.join(tokens)
 
-    def extract_entities(self, text):
-        """Extract beer-related entities from text."""
-        beer_styles = ['ipa', 'lager', 'stout', 'porter', 'ale', 'pilsner', 'saison']
-        text = text.lower()
-        entities = [style for style in beer_styles if style in text]
-        return ', '.join(entities)
 
+    def extract_entities(self, text):
+        """Extract beer-related entities dynamically from the dataset."""
+        # Predefined styles list with additional styles
+        if not hasattr(self, 'beer_styles'):
+            self.beer_styles = {'ipa', 'lager', 'stout', 'porter', 'ale', 'pilsner', 'saison',
+                                'amber', 'bock', 'brown ale', 'dubbel', 'tripel', 'quad', 'gose',
+                                'wheat', 'hefeweizen', 'kolsch', 'pale ale', 'blonde ale',
+                                'cream ale', 'barleywine', 'scotch ale', 'red ale', 'golden ale',
+                                'rye', 'imperial stout', 'black ipa', 'session ipa', 'hazy ipa',
+                                'fruit beer', 'sour', 'wild ale', 'milk stout', 'belgian strong ale'}
+            # Add dynamic styles from dataset
+            dynamic_styles = set(self.data['Style'].dropna().str.lower().unique())
+            self.beer_styles.update(dynamic_styles)
+
+        text = text.lower()
+        entities = [style for style in self.beer_styles if style in text]
+        return ', '.join(entities)
     def analyze_sentiment(self, text):
         """Analyze sentiment with TextBlob."""
         blob = TextBlob(text)
@@ -194,6 +204,15 @@ class BeerChatbot:
 
 
 if __name__ == "__main__":
-    file_path = '/Users/rasmusjensen/PycharmProjects/BeerChatBot/data/beer_profile_and_ratings.csv'
+    # Find dynamisk sti til data-mappen
+    base_dir = os.path.dirname(os.path.abspath(__file__))  # Stien til script.py
+    data_dir = os.path.join(base_dir, "data")  # Tilføjer data-mappen
+    file_path = os.path.join(data_dir, "beer_profile_and_ratings.csv")  # Filnavn
+
+    # Tjek om filen findes
+    if not os.path.exists(file_path):
+        print(f"Error: File not found at {file_path}")
+        exit(1)
+
     chatbot = BeerChatbot(file_path)
     chatbot.chat()
