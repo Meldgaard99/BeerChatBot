@@ -1,4 +1,5 @@
 import re
+import numpy as np
 import pandas as pd
 from nltk.corpus import stopwords
 from nltk.tokenize import RegexpTokenizer
@@ -21,10 +22,10 @@ class BeerChatbot:
         self.data = pd.read_csv(file_path)
         self.conversation = []
         self.sentiment_scores = []
-        self.user_inputs = []  # Store all user inputs for wordcloud
+        self.user_inputs = []
         self.tokenizer = RegexpTokenizer(r'\w+')
         self.stopwords = set(stopwords.words('english'))
-        self.stopwords.update(['beer', 'want', 'like', 'good'])
+        self.stopwords.update(['beer', 'want', 'like',])
         self.vectorizer = TfidfVectorizer()
         self.stemmer = PorterStemmer()
         self.lemmatizer = WordNetLemmatizer()
@@ -35,9 +36,9 @@ class BeerChatbot:
         self.train_ml_models()
 
     def preprocess_text(self, text):
-        """Text preprocessing with stemming and lemmatization."""
-        if not isinstance(text, str):
-            return ''
+        """Preprocesses text by removing stopwords, converting to lowercase,
+               and applying stemming and lemmatization to normalize input."""
+        if not isinstance(text, str):  return ''
         text = text.lower()
         text = re.sub(r'[^a-zA-Z\s]', '', text)
         tokens = self.tokenizer.tokenize(text)
@@ -47,7 +48,8 @@ class BeerChatbot:
 
 
     def extract_entities(self, text):
-        """Extract beer-related entities dynamically from the dataset."""
+        """Extracts beer-related entities (types) mentioned in the text
+               based on a predefined list and dynamically added types from the dataset."""
         # Predefined styles list with additional styles
         if not hasattr(self, 'beer_styles'):
             self.beer_styles = {'ipa', 'lager', 'stout', 'porter', 'ale', 'pilsner', 'saison',
@@ -107,25 +109,50 @@ class BeerChatbot:
         # Combine all user inputs
         text = ' '.join(self.user_inputs)
 
-        # Create and generate a word cloud image
+
         wordcloud = WordCloud(width=800, height=400,
                               background_color='white',
                               stopwords=self.stopwords,
                               min_font_size=10).generate(text)
 
-        # Display the word cloud
+        # Showing cloudwords
         plt.figure(figsize=(10, 5))
         plt.imshow(wordcloud, interpolation='bilinear')
         plt.axis('off')
         plt.title('WordCloud of Conversation Topics')
         plt.show()
 
-    def train_ml_models(self):
-        """Train Random Forest and K-Means models."""
-        # Prepare data
+    def elbow_analysis(self, max_clusters=10):
+        """Perform elbow analysis"""
         X = self.vectorizer.fit_transform(self.data['processed_desc'])
-        self.kmeans = KMeans(n_clusters=5, random_state=42)
+        wcss = []
+        for k in range(1, max_clusters + 1):
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+            kmeans.fit(X)
+            wcss.append(kmeans.inertia_)
+
+        # Calculate the dynamic optimal_k
+        x_points = range(1, max_clusters + 1)
+        y_points = np.array(wcss)
+        slopes = np.diff(y_points) / np.diff(x_points)  # Calculate slopes between points
+        second_derivative = np.diff(slopes)
+        optimal_k = np.argmin(second_derivative) + 2
+
+        return optimal_k
+
+    def train_ml_models(self):
+        """Trains machine learning models:
+            1. K-Means for clustering beer descriptions into groups.
+            2. Random Forest for classification and prediction of clusters."""
+        X = self.vectorizer.fit_transform(self.data['processed_desc'])
+        # Perform elbow analysis and get dynamic k
+        optimal_k = self.elbow_analysis(max_clusters=10)
+        print(f"Optimal k dynamically calculated: {optimal_k}")
+
+        # Train K-Means
+        self.kmeans = KMeans(n_clusters=optimal_k, random_state=42)
         self.data['cluster'] = self.kmeans.fit_predict(X)
+
 
         # Train Random Forest for classification
         X_train, X_test, y_train, y_test = train_test_split(X, self.data['cluster'], test_size=0.2, random_state=42)
@@ -138,8 +165,9 @@ class BeerChatbot:
         print(classification_report(y_test, y_pred))
 
     def recommend_beers(self, user_input):
-        """Recommend beers based on clustering and random forest predictions."""
-        # Process input
+        """Recommends beers based on user input by:
+            - Predicting clusters using the Random Forest model.
+            - Filtering and ranking beers based on similarity and input preferences."""
         processed_input = self.preprocess_text(user_input)
         input_vector = self.vectorizer.transform([processed_input])
 
@@ -149,7 +177,7 @@ class BeerChatbot:
 
         # Filter for negative sentiment (bad beers)
         if 'bad' in user_input.lower() or 'worst' in user_input.lower():
-            cluster_data = self.data[self.data['review_overall'] < 3.0]
+            cluster_data = self.data[self.data['review_overall'] < 2.5]
 
         # Sort recommendations by similarity
         similarities = cluster_data['processed_desc'].apply(lambda x: self.similarity(processed_input, x))
@@ -168,7 +196,9 @@ class BeerChatbot:
             if not reason:
                 reason.append("similar description and style")
 
-            explanation = f"- {beer['Name']} ({beer['Style']}) - ABV: {beer['ABV']}% | IBU: {beer['Min IBU']}-{beer['Max IBU']} - Recommended because of: {', '.join(reason)}"
+            explanation = (f"- {beer['Name']} ({beer['Style']}) - ABV: {beer['ABV']}% | "
+                           f"IBU: {beer['Min IBU']}-{beer['Max IBU']} | Overall Rating: {beer['review_overall']:.2f} "
+                           f"- Recommended because of: {', '.join(reason)}")
             explanations.append(explanation)
 
         return explanations
@@ -203,11 +233,13 @@ class BeerChatbot:
         self.generate_wordcloud()
 
 
+
+#Link til datasættet hvis der er problemer - https://www.kaggle.com/datasets/ruthgn/beer-profile-and-ratings-data-set?select=beer_profile_and_ratings.csv
 if __name__ == "__main__":
     # Find dynamisk sti til data-mappen
-    base_dir = os.path.dirname(os.path.abspath(__file__))  # Stien til script.py
-    data_dir = os.path.join(base_dir, "data")  # Tilføjer data-mappen
-    file_path = os.path.join(data_dir, "beer_profile_and_ratings.csv")  # Filnavn
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, "data")
+    file_path = os.path.join(data_dir, "beer_profile_and_ratings.csv")
 
     # Tjek om filen findes
     if not os.path.exists(file_path):

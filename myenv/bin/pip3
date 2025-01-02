@@ -1,4 +1,4 @@
-#!/Users/rasmusjensen/PycharmProjects/BeerChatBot/myenv/bin/python3.10
+#!/Users/rasmusjensen/PycharmProjects/BeerChatBot/myenv/bin/python3.13
 # -*- coding: utf-8 -*-
 import re
 import sys
